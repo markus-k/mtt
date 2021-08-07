@@ -39,10 +39,14 @@ enum AppError {
     NoTimerRunning,
 }
 
-fn app_error_string(err: &AppError) -> &str {
-    match err {
-        AppError::TimerAlreadyRunning => "Timer already running",
-        AppError::NoTimerRunning => "No timer running",
+impl std::fmt::Display for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let string = match self {
+            AppError::TimerAlreadyRunning => "Timer already running",
+            AppError::NoTimerRunning => "No timer running",
+        };
+
+        f.write_str(string)
     }
 }
 
@@ -146,14 +150,14 @@ fn main() {
     match opts.subcmd {
         SubCommand::Start(_cmd) => {
             if let Err(err) = state.start_timer(Utc::now()) {
-                println!("Cannot start timer: {}", app_error_string(&err));
+                println!("Cannot start timer: {}", err);
             } else {
                 println!("Timer started.");
             }
         }
         SubCommand::Stop => {
             match state.stop_timer(Utc::now()) {
-                Err(err) => println!("Cannot stop timer: {}", app_error_string(&err)),
+                Err(err) => println!("Cannot stop timer: {}", err),
                 Ok(duration) => println!("Tracked: {}", get_duration_string(&duration)),
             };
 
