@@ -1,4 +1,4 @@
-use std::fs::{File, create_dir_all};
+use std::fs::{create_dir_all, File};
 use std::path::Path;
 use std::time::Duration;
 
@@ -88,7 +88,7 @@ impl AppState {
                 let duration = (time - start).to_std().unwrap_or_default();
 
                 Ok(duration)
-            },
+            }
             None => Err(AppError::NoTimerRunning),
         }
     }
@@ -178,7 +178,6 @@ fn main() {
         }
     };
 
-
     write_appstate(&state, &state_path).unwrap();
 }
 
@@ -212,5 +211,29 @@ mod tests {
         let err = res.expect_err("stop_timer should not succeed");
 
         assert_eq!(err, AppError::NoTimerRunning);
+    }
+
+    #[test]
+    fn test_appstate_abort() {
+        let mut state = AppState::default();
+        let start_time = Utc::now();
+
+        state.start_timer(start_time).unwrap();
+
+        state.abort_timer();
+
+        assert!(!state.is_timer_running());
+    }
+
+    #[test]
+    fn test_current_duration() {
+        let mut state = AppState::default();
+        let duration = Duration::from_secs(180);
+        let start_time = Utc::now();
+        let stop_time = start_time + chrono::Duration::from_std(duration).unwrap();
+
+        state.start_timer(start_time).unwrap();
+
+        assert_eq!(state.current_duration(stop_time).unwrap(), duration);
     }
 }
