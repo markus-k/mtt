@@ -19,9 +19,9 @@ struct Opts {
 #[derive(Clap)]
 enum SubCommand {
     #[clap(about = "Starts the timer")]
-    Start(StartCommand),
+    Start,
     #[clap(about = "Stops the timer")]
-    Stop,
+    Stop(StopCommand),
     #[clap(about = "Abort the current timer")]
     Abort,
     #[clap(about = "Shows the current total time")]
@@ -31,7 +31,13 @@ enum SubCommand {
 }
 
 #[derive(Clap)]
-struct StartCommand {}
+struct StopCommand {
+    #[clap(
+        about = "Time to use when stopping the timer. Using now when not supplied.",
+        parse("Utc.datetime_from_str")
+    )]
+    stop_time: Option<DateTime<Local>>,
+}
 
 #[derive(Debug, PartialEq)]
 enum AppError {
@@ -148,15 +154,20 @@ fn main() {
     let mut state = read_appstate(&state_path).unwrap_or_default();
 
     match opts.subcmd {
-        SubCommand::Start(_cmd) => {
+        SubCommand::Start => {
             if let Err(err) = state.start_timer(Utc::now()) {
                 println!("Cannot start timer: {}", err);
             } else {
                 println!("Timer started.");
             }
         }
-        SubCommand::Stop => {
-            match state.stop_timer(Utc::now()) {
+        SubCommand::Stop(stop_cmd) => {
+            let stop_time: DateTime<Utc> = match stop_cmd.stop_time {
+                Some(time) => time.with_timezone(&Utc),
+                None => Utc::now(),
+            };
+
+            match state.stop_timer(stop_time) {
                 Err(err) => println!("Cannot stop timer: {}", err),
                 Ok(duration) => println!("Tracked: {}", get_duration_string(&duration)),
             };
