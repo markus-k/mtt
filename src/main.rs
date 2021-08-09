@@ -32,10 +32,7 @@ enum SubCommand {
 
 #[derive(Clap)]
 struct StopCommand {
-    #[clap(
-        about = "Time to use when stopping the timer. Using now when not supplied.",
-        parse("Utc.datetime_from_str")
-    )]
+    #[clap(about = "Time to use when stopping the timer. Using now when not supplied.")]
     stop_time: Option<DateTime<Local>>,
 }
 
