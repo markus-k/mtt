@@ -1,4 +1,7 @@
+use std::collections::HashMap;
+use std::error::Error;
 use std::fs::{create_dir_all, File};
+use std::iter::Sum;
 use std::path::Path;
 use std::time::Duration;
 
@@ -7,6 +10,17 @@ use clap::{crate_version, Clap};
 use directories::ProjectDirs;
 use humantime::format_duration;
 use serde::{Deserialize, Serialize};
+
+/*
+ * Usage:
+ *
+ * mtt new NAME
+ * mtt start [NAME]
+ * mtt stop [STOP-TIME] [-m MESSAGE]
+ * mtt list
+ * mtt show
+ *
+ */
 
 #[derive(Clap)]
 #[clap(author = "Markus Kasten <github@markuskasten.eu>")]
@@ -39,6 +53,8 @@ enum AppError {
     NoTimerRunning,
 }
 
+impl Error for AppError {}
+
 impl std::fmt::Display for AppError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let string = match self {
@@ -51,15 +67,94 @@ impl std::fmt::Display for AppError {
 }
 
 #[derive(Deserialize, Serialize)]
+struct TimerRecord {
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    comment: String,
+}
+impl TimerRecord {
+    fn new(start: DateTime<Utc>, end: DateTime<Utc>, comment: String) -> Self {
+        Self {
+            start,
+            end,
+            comment,
+        }
+    }
+
+    fn duration(&self) -> Duration {
+        // in case start > end date, return 0s duration
+        (self.end - self.start).to_std().unwrap_or_default()
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct Timer {
+    records: Vec<TimerRecord>,
+    current_start: Option<DateTime<Utc>>,
+}
+
+impl Default for Timer {
+    fn default() -> Self {
+        Self {
+            records: vec![],
+            current_start: None,
+        }
+    }
+}
+
+impl Timer {
+    fn start_timer(&mut self, start_time: DateTime<Utc>) -> Result<(), AppError> {
+        if self.current_start.is_some() {
+            return Err(AppError::TimerAlreadyRunning);
+        }
+
+        self.current_start = Some(start_time);
+
+        Ok(())
+    }
+
+    fn stop_timer(
+        &mut self,
+        stop_time: DateTime<Utc>,
+        comment: String,
+    ) -> Result<&TimerRecord, AppError> {
+        if let Some(current_start) = self.current_start {
+            let record = TimerRecord::new(current_start, stop_time, comment);
+            self.records.push(record);
+
+            self.current_start = None;
+
+            Ok(&record)
+        } else {
+            Err(AppError::NoTimerRunning)
+        }
+    }
+
+    fn total_duration(&self) -> Duration {
+        let durations = self.records.iter().map(|record| record.duration());
+        Duration::sum(durations)
+    }
+
+    fn is_running(&self) -> bool {
+        self.current_start.is_some()
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 struct AppState {
     total: Duration,
     current_start: Option<DateTime<Utc>>,
+
+    timers: HashMap<String, Timer>,
+    active_timer: Option<String>,
 }
 impl Default for AppState {
     fn default() -> Self {
         AppState {
             total: Duration::from_secs(0),
             current_start: None,
+            timers: HashMap::default(),
+            active_timer: None,
         }
     }
 }
@@ -239,5 +334,43 @@ mod tests {
         state.start_timer(start_time).unwrap();
 
         assert_eq!(state.current_duration(stop_time).unwrap(), duration);
+    }
+
+    #[test]
+    fn test_timerrecord_duration() {
+        let duration = Duration::from_secs(1234);
+        let start = Utc::now();
+        let end = start + chrono::Duration::from_std(duration).unwrap();
+
+        let record = TimerRecord::new(start, end, "".to_owned());
+
+        assert_eq!(record.duration(), duration);
+
+        // zero duration
+        let record = TimerRecord::new(start, start, "".to_owned());
+
+        assert_eq!(record.duration(), Duration::ZERO);
+    }
+
+    #[test]
+    fn test_timer_total_duration() {
+        let duration = Duration::from_secs(1234);
+        let start = Utc::now();
+        let end = start + chrono::Duration::from_std(duration).unwrap();
+        let record = TimerRecord::new(start, end, "".to_owned());
+
+        let duration2 = Duration::from_secs(321);
+        let start2 = Utc::now();
+        let end2 = start2 + chrono::Duration::from_std(duration2).unwrap();
+        let record2 = TimerRecord::new(start2, end2, "Playing solitaire".to_owned());
+
+        let total_duration = duration + duration2;
+
+        let timer = Timer {
+            records: vec![record, record2],
+            current_start: None,
+        };
+
+        assert_eq!(timer.total_duration(), total_duration);
     }
 }
