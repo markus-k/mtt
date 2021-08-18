@@ -2,6 +2,8 @@
 name = "mtt"
 version = "0.1.0"
 description = "A minimal time tracker written in Rust."
+categories = ["command-line-utilitie"]
+keywords = ["timer", "timetracker", "time-tracker", "time-keeper"]
 repository = "https://github.com/markus-k/mtt"
 license = "Apache-2.0"
 
