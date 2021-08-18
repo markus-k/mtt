@@ -35,7 +35,7 @@ enum SubCommand {
     #[clap(about = "Starts the timer")]
     Start(StartCommand),
     #[clap(about = "Stops the timer")]
-    Stop,
+    Stop(StopCommand),
     #[clap(about = "Abort the current timer")]
     Abort,
     #[clap(about = "Shows the current total time")]
@@ -45,12 +45,34 @@ enum SubCommand {
 }
 
 #[derive(Clap)]
-struct StartCommand {}
+struct StartCommand {
+    #[clap(about = "Timer to start")]
+    timer_name: Option<String>,
+
+    #[clap(long, short, about = "Create timer with this name")]
+    create: bool,
+}
+
+#[derive(Clap)]
+struct StopCommand {
+    #[clap(about = "Timer to stop")]
+    timer_name: Option<String>,
+
+    #[clap(
+        long,
+        about = "Stop time to use instead of now (if you forgot to stop your timer again)"
+    )]
+    stop_time: String,
+
+    #[clap(long, about = "A comment to add to this timer record")]
+    comment: String,
+}
 
 #[derive(Debug, PartialEq)]
 enum AppError {
     TimerAlreadyRunning,
     NoTimerRunning,
+    NoSuchTimer,
 }
 
 impl Error for AppError {}
@@ -60,6 +82,7 @@ impl std::fmt::Display for AppError {
         let string = match self {
             AppError::TimerAlreadyRunning => "Timer already running",
             AppError::NoTimerRunning => "No timer running",
+            AppError::NoSuchTimer => "No timer with this name",
         };
 
         f.write_str(string)
@@ -119,12 +142,13 @@ impl Timer {
         comment: String,
     ) -> Result<&TimerRecord, AppError> {
         if let Some(current_start) = self.current_start {
-            let record = TimerRecord::new(current_start, stop_time, comment);
-            self.records.push(record);
+            self.records
+                .push(TimerRecord::new(current_start, stop_time, comment));
+            let record = self.records.last().unwrap();
 
             self.current_start = None;
 
-            Ok(&record)
+            Ok(record)
         } else {
             Err(AppError::NoTimerRunning)
         }
@@ -142,17 +166,12 @@ impl Timer {
 
 #[derive(Deserialize, Serialize)]
 struct AppState {
-    total: Duration,
-    current_start: Option<DateTime<Utc>>,
-
     timers: HashMap<String, Timer>,
     active_timer: Option<String>,
 }
 impl Default for AppState {
     fn default() -> Self {
         AppState {
-            total: Duration::from_secs(0),
-            current_start: None,
             timers: HashMap::default(),
             active_timer: None,
         }
@@ -160,44 +179,60 @@ impl Default for AppState {
 }
 
 impl AppState {
-    fn start_timer(&mut self, start_time: DateTime<Utc>) -> Result<(), AppError> {
-        match self.current_start {
-            Some(_) => Err(AppError::TimerAlreadyRunning),
-            None => {
-                self.current_start = Some(start_time);
-
-                Ok(())
-            }
+    fn get_active_timer(&self) -> Option<&Timer> {
+        match &self.active_timer {
+            Some(timer_name) => self.timers.get(timer_name),
+            None => None,
         }
     }
 
-    fn stop_timer(&mut self, stop_time: DateTime<Utc>) -> Result<Duration, AppError> {
-        let duration = self.current_duration(stop_time)?;
-
-        self.total += duration;
-
-        self.current_start = None;
-
-        Ok(duration)
-    }
-
-    fn current_duration(&self, time: DateTime<Utc>) -> Result<Duration, AppError> {
-        match self.current_start {
-            Some(start) => {
-                let duration = (time - start).to_std().unwrap_or_default();
-
-                Ok(duration)
-            }
-            None => Err(AppError::NoTimerRunning),
+    fn has_active_timer(&self) -> bool {
+        if let Some(timer_name) = &self.active_timer {
+            self.timers.contains_key(timer_name)
+        } else {
+            false
         }
     }
 
-    fn is_timer_running(&self) -> bool {
-        self.current_start.is_some()
+    fn set_timer_active(&mut self, timer_name: &str) -> Result<(), AppError> {
+        if self.timers.contains_key(timer_name) {
+            self.active_timer = Some(String::from(timer_name));
+
+            Ok(())
+        } else {
+            Err(AppError::NoSuchTimer)
+        }
     }
 
-    fn abort_timer(&mut self) {
-        self.current_start = None;
+    fn create_timer(&mut self, name: &str) -> Option<&Timer> {
+        if self.timers.contains_key(name) {
+            None
+        } else {
+            let timer = Timer::default();
+            self.timers.insert(name.to_string(), timer);
+
+            self.get_timer(name)
+        }
+    }
+
+    fn get_timer(&self, name: &str) -> Option<&Timer> {
+        self.timers.get(name)
+    }
+
+    fn read_from_file(path: &Path) -> Result<Self, serde_json::Error> {
+        let file = File::open(path);
+
+        if let Ok(file) = file {
+            serde_json::from_reader(file)
+        } else {
+            Ok(AppState::default())
+        }
+    }
+
+    fn write_to_file(&self, path: &Path) -> Result<(), serde_json::Error> {
+        let file = File::create(path).unwrap();
+
+        serde_json::to_writer(file, self)
     }
 }
 
@@ -212,22 +247,6 @@ fn get_statefile_path() -> std::path::PathBuf {
     state_path
 }
 
-fn read_appstate(path: &Path) -> Result<AppState, serde_json::Error> {
-    let file = File::open(path);
-
-    if let Ok(file) = file {
-        serde_json::from_reader(file)
-    } else {
-        Ok(AppState::default())
-    }
-}
-
-fn write_appstate(state: &AppState, path: &Path) -> Result<(), serde_json::Error> {
-    let file = File::create(path).unwrap();
-
-    serde_json::to_writer(file, state)
-}
-
 fn get_duration_string(duration: &Duration) -> String {
     let duration_secs = Duration::from_secs(duration.as_secs());
 
@@ -240,101 +259,22 @@ fn main() {
     let opts = Opts::parse();
 
     let state_path = get_statefile_path();
-    let mut state = read_appstate(&state_path).unwrap_or_default();
+    let mut state = AppState::read_from_file(&state_path).unwrap_or_default();
 
     match opts.subcmd {
-        SubCommand::Start(_cmd) => {
-            if let Err(err) = state.start_timer(Utc::now()) {
-                println!("Cannot start timer: {}", err);
-            } else {
-                println!("Timer started.");
-            }
-        }
-        SubCommand::Stop => {
-            match state.stop_timer(Utc::now()) {
-                Err(err) => println!("Cannot stop timer: {}", err),
-                Ok(duration) => println!("Tracked: {}", get_duration_string(&duration)),
-            };
-
-            println!("Total time: {}", get_duration_string(&state.total));
-        }
-        SubCommand::Abort => {
-            state.abort_timer();
-
-            println!("Timer was stopped and duration discarded.");
-        }
-        SubCommand::Show => {
-            if state.is_timer_running() {
-                let duration = state.current_duration(Utc::now()).unwrap();
-                println!("Current timer: {}", get_duration_string(&duration));
-            }
-            println!("Total: {}", get_duration_string(&state.total));
-        }
-        SubCommand::Reset => {
-            state.total = Duration::from_secs(0);
-
-            println!("Total duration was reset.");
-        }
+        SubCommand::Start(_cmd) => {}
+        SubCommand::Stop(_cmd) => {}
+        SubCommand::Abort => {}
+        SubCommand::Show => {}
+        SubCommand::Reset => {}
     };
 
-    write_appstate(&state, &state_path).unwrap();
+    state.write_to_file(&state_path).unwrap();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_appstate_default_no_timer_running() {
-        let state = AppState::default();
-        assert_eq!(state.current_start, None);
-    }
-
-    #[test]
-    fn test_appstate_start_timer() {
-        let mut state = AppState::default();
-        let start_time = Utc::now();
-
-        let res = state.start_timer(start_time);
-        assert_eq!(res, Ok(()));
-
-        assert_eq!(state.current_start.unwrap(), start_time);
-    }
-
-    #[test]
-    fn test_appstate_stop_without_timer_running() {
-        let mut state = AppState::default();
-        let stop_time = Utc::now();
-
-        let res = state.stop_timer(stop_time);
-        let err = res.expect_err("stop_timer should not succeed");
-
-        assert_eq!(err, AppError::NoTimerRunning);
-    }
-
-    #[test]
-    fn test_appstate_abort() {
-        let mut state = AppState::default();
-        let start_time = Utc::now();
-
-        state.start_timer(start_time).unwrap();
-
-        state.abort_timer();
-
-        assert!(!state.is_timer_running());
-    }
-
-    #[test]
-    fn test_current_duration() {
-        let mut state = AppState::default();
-        let duration = Duration::from_secs(180);
-        let start_time = Utc::now();
-        let stop_time = start_time + chrono::Duration::from_std(duration).unwrap();
-
-        state.start_timer(start_time).unwrap();
-
-        assert_eq!(state.current_duration(stop_time).unwrap(), duration);
-    }
 
     #[test]
     fn test_timerrecord_duration() {
@@ -372,5 +312,40 @@ mod tests {
         };
 
         assert_eq!(timer.total_duration(), total_duration);
+    }
+
+    #[test]
+    fn test_appstate_set_active_timer_nonexisting() {
+        let mut state = AppState::default();
+
+        assert_eq!(
+            state.set_timer_active("something").unwrap_err(),
+            AppError::NoSuchTimer
+        );
+    }
+
+    #[test]
+    fn test_appstate_create_timer() {
+        let mut state = AppState::default();
+        let timer_name = "timer name";
+
+        state.create_timer(timer_name).unwrap();
+
+        // can't create a second timer with the same name
+        assert!(state.create_timer(timer_name).is_none());
+    }
+
+    #[test]
+    fn test_appstate_get_timer() {
+        let mut state = AppState::default();
+        let timer_name = "timer name";
+
+        state.create_timer(timer_name).unwrap();
+
+        let timer1 = state.get_timer(timer_name).unwrap();
+
+        let timer2 = state.get_timer(timer_name).unwrap();
+
+        assert!(std::ptr::eq(timer1, timer2));
     }
 }
