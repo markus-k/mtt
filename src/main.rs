@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use chrono::prelude::*;
-use clap::{crate_version, Clap};
+use clap::{Parser, Subcommand};
 use directories::ProjectDirs;
 use humantime::format_duration;
 use serde::{Deserialize, Serialize};
@@ -22,15 +22,14 @@ use serde::{Deserialize, Serialize};
  *
  */
 
-#[derive(Clap)]
-#[clap(author = "Markus Kasten <github@markuskasten.eu>")]
-#[clap(version = crate_version!())]
+#[derive(Parser)]
+#[clap(author, version, about)]
 struct Opts {
     #[clap(subcommand)]
     subcmd: SubCommand,
 }
 
-#[derive(Clap)]
+#[derive(Subcommand)]
 enum SubCommand {
     #[clap(about = "Starts the timer")]
     Start(StartCommand),
@@ -44,27 +43,27 @@ enum SubCommand {
     Reset,
 }
 
-#[derive(Clap)]
+#[derive(Parser)]
 struct StartCommand {
-    #[clap(about = "Timer to start")]
+    #[clap(help = "Timer to start")]
     timer_name: Option<String>,
 
-    #[clap(long, short, about = "Create timer with this name")]
+    #[clap(long, short, help = "Create timer with this name")]
     create: bool,
 }
 
-#[derive(Clap)]
+#[derive(Parser)]
 struct StopCommand {
-    #[clap(about = "Timer to stop")]
+    #[clap(help = "Timer to stop")]
     timer_name: Option<String>,
 
     #[clap(
         long,
-        about = "Stop time to use instead of now (if you forgot to stop your timer again)"
+        help = "Stop time to use instead of now (if you forgot to stop your timer again)"
     )]
     stop_time: String,
 
-    #[clap(long, about = "A comment to add to this timer record")]
+    #[clap(long, help = "A comment to add to this timer record")]
     comment: String,
 }
 
